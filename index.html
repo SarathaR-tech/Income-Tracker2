@@ -6,57 +6,8 @@
 <title>Night Mail Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Syne:wght@600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, push, remove, onValue, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyDrKjiPaWEyE2imLKfigyFh3AAygj1b-Nw",
-  authDomain: "income-tracker-aef60.firebaseapp.com",
-  databaseURL: "https://income-tracker-aef60-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "income-tracker-aef60",
-  storageBucket: "income-tracker-aef60.firebasestorage.app",
-  messagingSenderId: "453857960668",
-  appId: "1:453857960668:web:5e9940a1b1ee60e7d6ca19"
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
-
-// Expose Firebase functions to window
-window._fbDb = db;
-window._fbRef = ref;
-window._fbPush = push;
-window._fbRemove = remove;
-window._fbOnValue = onValue;
-window._fbSet = set;
-window._fbReady = true;
-
-// Load data from Firebase
-onValue(ref(db, 'nightmail'), function(snapshot){
-  var val = snapshot.val();
-  if(val){
-    // Load entries
-    if(val.entries){
-      DATA.entries = Object.keys(val.entries).map(function(k){
-        var e = val.entries[k];
-        e.firebaseKey = k;
-        return e;
-      });
-      DATA.entries.sort(function(a,b){return a.date.localeCompare(b.date);});
-    }
-    // Load settings
-    if(val.settings){
-      SETTINGS = val.settings;
-      loadSettings();
-    }
-  }
-  showStatus('✓ Live · '+DATA.entries.length+' entries synced', '#2ECC8A');
-  render();
-}, function(err){
-  showStatus('⚠ Firebase error: '+err.message, '#FF5C5C');
-});
-</script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 <style>
 :root{
   --bg:#0F1117;--bg2:#1A1D27;--bg3:#22263A;--border:#2E3248;
@@ -364,12 +315,28 @@ var ROUTES = [
   {num:'7550107', price:16.00},
   {num:'7550110', price:14.00}
 ];
-var ITEMS = ['HBL','HS','Lauu','Kaul','Letters','LBF','VN'];
+var ITEMS = ['HBL','HS','Love','Kaul','Letters','LBF','VN'];
 var VAT = 0.255;
 var TOTAL_BASE = 16.80+12.50+13.65+16.00+14.00; // 72.95
 
 var DATA = JSON.parse(localStorage.getItem('nightmail_data')||'{"entries":[]}');
 var SETTINGS = JSON.parse(localStorage.getItem('nightmail_settings')||'{}');
+
+// Firebase init
+var _db = null;
+try {
+  var _fbConfig = {
+    apiKey: "AIzaSyDrKjiPaWEyE2imLKfigyFh3AAygj1b-Nw",
+    authDomain: "income-tracker-aef60.firebaseapp.com",
+    databaseURL: "https://income-tracker-aef60-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "income-tracker-aef60",
+    storageBucket: "income-tracker-aef60.firebasestorage.app",
+    messagingSenderId: "453857960668",
+    appId: "1:453857960668:web:5e9940a1b1ee60e7d6ca19"
+  };
+  if(!firebase.apps.length) firebase.initializeApp(_fbConfig);
+  _db = firebase.database();
+} catch(e) { console.log('Firebase init error:', e); }
 
 function fmt(n){return '€'+parseFloat(n||0).toFixed(2);}
 function fmtN(n){return parseFloat(n||0).toFixed(2);}
@@ -382,8 +349,8 @@ function showStatus(msg, color){
 
 function manualRefresh(){
   showStatus('⏳ Refreshing...', 'var(--yellow)');
-  if(window._fbReady){
-    window._fbOnValue(window._fbRef(window._fbDb,'nightmail'), function(snapshot){
+  if(_db){
+    _db.ref('nightmail'), function(snapshot){
       var val = snapshot.val();
       if(val && val.entries){
         DATA.entries = Object.keys(val.entries).map(function(k){
@@ -397,6 +364,27 @@ function manualRefresh(){
   }
 }
 
+function initFirebase(){
+  if(!_db){ showStatus('⚠ Firebase offline — using local storage', '#FFD166'); return; }
+  showStatus('⏳ Connecting to Firebase...', '#FFD166');
+  _db.ref('nightmail').on('value', function(snapshot){
+    var val = snapshot.val();
+    if(val){
+      if(val.entries){
+        DATA.entries = Object.keys(val.entries).map(function(k){
+          var e = val.entries[k]; e.firebaseKey = k; return e;
+        });
+        DATA.entries.sort(function(a,b){return a.date.localeCompare(b.date);});
+      }
+      if(val.settings){ SETTINGS = val.settings; loadSettings(); }
+    }
+    showStatus('✓ Live · '+DATA.entries.length+' entries synced', '#2ECC8A');
+    render();
+  }, function(err){
+    showStatus('⚠ Firebase error: '+err.message, '#FF5C5C');
+  });
+}
+
 function init(){
   initMonths();
   setTodayDate();
@@ -404,6 +392,7 @@ function init(){
   buildEntryTable();
   buildStorageTable();
   render();
+  initFirebase();
 }
 
 function setTodayDate(){
@@ -514,12 +503,26 @@ function saveEntry(){
   var dayItems = routes.reduce(function(a,r){return a+r.totalItems;},0);
   var dayLetters = routes.reduce(function(a,r){return a+(r.lettersCount||0);},0);
 
-  DATA.entries.push({date:date, routes:routes, dayTotal:dayTotal, dayItems:dayItems, dayLetters:dayLetters, id:Date.now()});
-  DATA.entries.sort(function(a,b){return a.date.localeCompare(b.date);});
-  localStorage.setItem('nightmail_data',JSON.stringify(DATA));
+  var entry = {date:date, routes:routes, dayTotal:dayTotal, dayItems:dayItems, dayLetters:dayLetters, id:Date.now()};
 
-  msg.className='add-msg';msg.textContent='✓ Entry saved for '+date+'!';
-  render();
+  if(_db){
+    msg.className='add-msg'; msg.textContent='⏳ Saving...';
+    _db.ref('nightmail/entries').push(entry).then(function(){
+      msg.className='add-msg'; msg.textContent='✓ Saved & synced for '+date+'!';
+      clearEntry();
+    }).catch(function(e){
+      DATA.entries.push(entry);
+      localStorage.setItem('nightmail_data',JSON.stringify(DATA));
+      msg.className='add-msg'; msg.textContent='✓ Saved locally.';
+      render();
+    });
+  } else {
+    DATA.entries.push(entry);
+    DATA.entries.sort(function(a,b){return a.date.localeCompare(b.date);});
+    localStorage.setItem('nightmail_data',JSON.stringify(DATA));
+    msg.className='add-msg'; msg.textContent='✓ Entry saved for '+date+'!';
+    render();
+  }
 }
 
 function clearEntry(){
@@ -646,8 +649,8 @@ function render(){
 
 function deleteEntry(id, firebaseKey){
   if(!confirm('Delete this entry?')) return;
-  if(window._fbReady && firebaseKey){
-    window._fbRemove(window._fbRef(window._fbDb,'nightmail/entries/'+firebaseKey));
+  if(_db && firebaseKey){
+    _db.ref('nightmail/entries/'+firebaseKey).remove();
   } else {
     DATA.entries = DATA.entries.filter(function(e){return String(e.id)!==String(id);});
     localStorage.setItem('nightmail_data',JSON.stringify(DATA));
@@ -843,8 +846,8 @@ function saveSettings(){
     ccity:document.getElementById('set-ccity').value
   };
   localStorage.setItem('nightmail_settings',JSON.stringify(SETTINGS));
-  if(window._fbReady){
-    window._fbSet(window._fbRef(window._fbDb,'nightmail/settings'), SETTINGS);
+  if(_db){
+    _db.ref('nightmail/settings').set(SETTINGS);
   }
   document.getElementById('set-msg').className='add-msg';
   document.getElementById('set-msg').textContent='✓ Settings saved & synced!';
